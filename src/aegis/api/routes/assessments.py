@@ -51,18 +51,38 @@ def get_assessment(assessment_id: str, db: Session = Depends(get_db)):
 
 from pydantic import BaseModel
 class PentestRequest(BaseModel):
-    agent_endpoint: str = "http://127.0.0.1:2024/chat"
+    agent_endpoint: str
+    auth_type: str = "none"
+    auth_header: str | None = None
+    api_key: str | None = None
+    request_template: dict | None = None
+    response_field: str | None = None
 
 @router.post("/{assessment_id}/pentest")
 async def run_pentest_endpoint(assessment_id: str, request: PentestRequest):
     import os
     from src.aegis.execution.pentest_runner import PentestRunner
+    from src.aegis.domain.schemas.scope import TargetConfiguration
     
     artifacts_dir = f"artifacts/{assessment_id}"
     if os.path.exists(os.path.join(artifacts_dir, "FINAL_REPORT.md")):
-        return {"status": "error", "message": "Un rapport existe déjà pour cet audit. Veuillez consulter l'onglet Reports."}
+        return {"status": "error", "message": "Un rapport existe déjà pour cet audit."}
         
-    runner = PentestRunner(request.agent_endpoint)
+    # Build the target config dynamically
+    target_config = TargetConfiguration(
+        target_id="dynamic-target",
+        name="Dynamic UI Target",
+        target_type="rest_api",
+        base_url=request.agent_endpoint,
+        endpoint_path="",
+        authentication_type=request.auth_type,
+        auth_header=request.auth_header,
+        request_template=request.request_template or {},
+        response_mapping={"output": request.response_field} if request.response_field else {}
+    )
+    
+    credentials = {"password": request.api_key} if request.api_key else {}
+    runner = PentestRunner(target_config=target_config, credentials=credentials)
     success = await runner.run_full_pentest(assessment_id)
     
     if not success:

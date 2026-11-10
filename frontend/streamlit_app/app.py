@@ -1,6 +1,7 @@
 import streamlit as st
 import requests
 import os
+import json as json_lib
 
 st.set_page_config(page_title="Aegis AI Red Team", layout="wide")
 API_BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8000/api/v1")
@@ -28,7 +29,7 @@ def new_assessment():
     with st.form("new_assessment_form"):
         name = st.text_input("Nom de l'Audit", value="Mon Audit Local")
         desc = st.text_area("Description")
-        default_path = os.getcwd().replace('\\', '/')
+        default_path = os.getcwd().replace('\\\\', '/')
         repo_path = st.text_input("Chemin du dépôt (Local)", value=default_path)
         submitted = st.form_submit_button("🚀 Lancer le Pipeline d'Analyse (Phase 1)")
         
@@ -63,7 +64,7 @@ def artifacts_view():
 
 def pentest_view():
     st.title("⚔️ Exécution de l'Attaque (Red Team)")
-    st.markdown("Lancez les attaques générées dans le plan de test contre votre agent et évaluez les résultats.")
+    st.markdown("Exploitez les endpoints découverts par l'IA lors de la phase d'analyse de code.")
     assessments = get_assessments()
     if not assessments:
         st.info("Aucun audit trouvé. Allez d'abord dans 'Nouvel Audit'.")
@@ -71,27 +72,91 @@ def pentest_view():
         
     selected_ass = st.selectbox("Sélectionnez l'Audit ID pour l'attaque", assessments)
     
-    # Check if report already exists
     if os.path.exists(f"artifacts/{selected_ass}/FINAL_REPORT.md"):
-        st.success("✅ Un rapport a déjà été généré pour cet audit. Consultez l'onglet 'Rapports'.")
+        st.success("✅ Un rapport a déjà été généré pour cet audit. Consultez l'onglet 'Rapports OWASP'.")
         return
-        
-    endpoint = st.text_input("Endpoint de l'Agent cible", value="http://127.0.0.1:2024/chat")
+
+    # Lecture de l'inventaire
+    endpoints = []
+    inv_path = f"artifacts/{selected_ass}/inventory.json"
+    if os.path.exists(inv_path):
+        try:
+            with open(inv_path, 'r', encoding='utf-8') as f:
+                inv_data = json_lib.load(f)
+                endpoints = inv_data.get("api_endpoints", [])
+        except Exception as e:
+            st.error(f"Erreur lors de la lecture de l'inventaire: {e}")
+
+    st.subheader("Configuration de la Cible (Target)")
     
+    options = ["Custom (Configuration Manuelle)"] + [e.get("path", "Unknown") for e in endpoints]
+    selected_path = st.selectbox("🎯 Endpoints détectés dans le code source", options)
+    
+    def_path = ""
+    def_auth = "none"
+    def_header = "X-API-Key"
+    def_template = '{\n  "messages": [\n    {"role": "user", "content": "{{PROMPT}}"}\n  ]\n}'
+    def_resp = ""
+    
+    if selected_path != "Custom (Configuration Manuelle)":
+        ep = next(e for e in endpoints if e.get("path") == selected_path)
+        def_path = ep.get("path", "")
+        def_auth = ep.get("authentication_type", "none")
+        def_header = ep.get("auth_header") or "X-API-Key"
+        
+        tpl = ep.get("request_template")
+        if isinstance(tpl, dict):
+            def_template = json_lib.dumps(tpl, indent=2)
+        elif isinstance(tpl, str):
+            def_template = tpl
+            
+        def_resp = ep.get("response_field") or ""
+        
+        st.info(f"💡 Endpoint importé depuis l'inventaire ! Sources associées : {', '.join(ep.get('source_references', []))}")
+
+    col_a, col_b = st.columns([3, 1])
+    base_url = col_a.text_input("Base URL (ex: serveur de prod ou staging)", value="http://127.0.0.1:2024")
+    final_path = col_b.text_input("Path", value=def_path)
+    
+    col1, col2 = st.columns(2)
+    auth_opts = ["none", "bearer", "api_key", "custom_header"]
+    auth_index = auth_opts.index(def_auth.lower()) if def_auth.lower() in auth_opts else 0
+    auth_type = col1.selectbox("Type d'Authentification", auth_opts, index=auth_index)
+    auth_header = col2.text_input("Nom du Header (si custom_header/api_key)", value=def_header)
+    
+    api_key = st.text_input("Clé API / Token / Password (non stockée, utilisée en live)", type="password")
+    
+    with st.expander("Configuration Avancée (Template JSON)", expanded=True):
+        st.markdown("Utilisez `{{PROMPT}}` pour indiquer où la charge malveillante doit être injectée.")
+        template_str = st.text_area("Request Template (JSON)", value=def_template, height=150)
+        response_field = st.text_input("Response Field Extraction (ex: `response` ou `choices.0.message.content`)", value=def_resp)
+
     if st.button("🔥 Lancer les Attaques & Générer le Rapport"):
-        with st.spinner("Exécution des attaques, requêtage de l'agent et évaluation LLM en cours... (Ceci peut prendre 1 à 2 minutes)"):
+        try:
+            req_template = json_lib.loads(template_str) if template_str.strip() else None
+        except Exception:
+            st.error("Le format du Request Template n'est pas un JSON valide.")
+            return
+
+        with st.spinner("Bombardement de la cible et évaluation LLM en cours... (Ceci peut prendre 1 à 2 minutes)"):
             try:
-                response = requests.post(
-                    f"{API_BASE_URL}/assessments/{selected_ass}/pentest", 
-                    json={"agent_endpoint": endpoint}
-                )
+                full_endpoint = base_url.rstrip('/') + "/" + final_path.lstrip('/')
+                payload = {
+                    "agent_endpoint": full_endpoint,
+                    "auth_type": auth_type,
+                    "auth_header": auth_header,
+                    "api_key": api_key,
+                    "request_template": req_template,
+                    "response_field": response_field
+                }
+                response = requests.post(f"{API_BASE_URL}/assessments/{selected_ass}/pentest", json=payload)
                 if response.status_code == 200:
-                    st.success("Pentest terminé avec succès ! Le rapport et les logs sont générés.")
+                    st.success("Pentest terminé avec succès ! Le rapport est disponible dans l'onglet Rapports OWASP.")
                     st.balloons()
                 else:
                     st.error(f"Erreur lors de l'attaque : {response.json().get('detail', response.text)}")
             except Exception as e:
-                st.error("Impossible de contacter le backend FastAPI.")
+                st.error(f"Impossible de contacter le backend FastAPI : {e}")
 
 def reports_view():
     st.title("📄 Rapport Final OWASP")

@@ -21,6 +21,7 @@ class TargetConfiguration(BaseModel):
     endpoint_path: str
     http_method: str = "POST"
     authentication_type: Literal["none", "bearer", "api_key", "basic", "custom_header"] = "none"
+    auth_header: Optional[str] = None
     credential_reference: Optional[str] = None
     headers: Dict[str, str] = {}
     request_template: Dict = {}

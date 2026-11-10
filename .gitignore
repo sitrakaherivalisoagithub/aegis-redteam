@@ -3,3 +3,4 @@ credentials/
 artifacts/
 .env
 aegis.db
+__pycache__

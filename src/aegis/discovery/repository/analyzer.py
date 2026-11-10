@@ -22,12 +22,18 @@ class RepositoryAnalyzer:
         target_path = repo_config.path if repo_config.source == "local" else repo_config.url
         
         # System prompt for the deep agent
-        system_prompt = f"""You are a senior security architect exploring a target repository. 
+        system_prompt = f"""You are a senior security architect exploring a target repository.
 Your goal is to identify languages, frameworks, dependencies, AI components, LLM integrations, and security mechanisms.
-The target repository is mounted at /workspace/
+The target repository is mounted at /workspace/ and is READ-ONLY: never try to write, edit or
+delete files there (use only ls, read_file, glob and grep on /workspace/).
 
-Use your tools to read files and explore the repository. 
+Use your tools to read files and explore the repository.
 Focus on identifying AI architectures, agents, prompts, and authentication mechanisms.
+
+For api_endpoints, list every HTTP route that forwards user input to an LLM: its path, method,
+the exact JSON request body it expects (as request_template), where the answer is in the JSON
+response (response_field) and the authentication scheme it enforces. Describe the scheme only:
+never copy credentials, tokens or keys found in the code.
 """
 
         state_backend = StateBackend()
